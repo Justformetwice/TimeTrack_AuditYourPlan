@@ -1,0 +1,521 @@
+<!-- 清零：161行 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<title>时间日志</title>
+<style>
+:root{--border:#ddd;--bgOdd:#fafafa;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,Arial;}
+body{background:#fff;color:#222;padding-bottom:60px;}
+header{display:flex;align-items:center;padding:10px 15px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px;}
+header h1{font-size:18px;margin-right:auto;}
+nav{margin-right:20px;}
+.tabBtn{background:#fff;border:1px solid var(--border);padding:5px 12px;margin:0 3px;cursor:pointer;}
+.tabBtn.active{background:#2196F3;color:#fff;border-color:#2196F3;}
+#tagPalette{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.tagWrap{display:flex;align-items:center;gap:4px;cursor:pointer;padding:2px 6px;border:1px solid transparent;border-radius:4px;}
+.tagWrap:hover{border-color:#000;}
+.tag{width:18px;height:18px;border-radius:50%;border:2px solid transparent;}
+.tag-clear{background:#fff;border:2px dashed #999;}
+.tagLabel{font-size:12px;color:#333;}
+.page{padding:15px;}
+.hidden{display:none;}
+table{width:100%;border-collapse:collapse;font-size:14px;}
+th,td{border:1px solid var(--border);padding:6px 8px;}
+th{background:#f5f5f5;text-align:left;}
+tbody tr:nth-child(odd){background:var(--bgOdd);}
+td[contenteditable="true"]:focus{background:#fff9c4;outline:none;}
+.timeCol{width:90px;font-weight:bold;color:#555;}
+.tagged-生活{background:#e1f5fe !important;}
+.tagged-运动{background:#ffecb3 !important;}
+.tagged-学校课程{background:#e8f5e9 !important;}
+.tagged-活动{background:#f3e5f5 !important;}
+.tagged-自我发展{background:#f5d9d9 !important;}
+.tagged-自主学习{background:#fff3e0 !important;}
+.tagged-论文任务{background:#efebe9 !important;}
+.tagged-琐事{background:#c9d8fd !important;}
+#dayStats{margin-top:10px;font-size:14px;color:#555;}
+.history-block{margin:8px 0;border:1px solid var(--border);border-radius:4px;padding:8px;cursor:pointer;}
+.history-block:hover{background:#fafafa;}
+.history-summary{display:flex;justify-content:space-between;align-items:center;}
+.history-detail{display:none;margin-top:8px;}
+.history-detail.show{display:block;}
+.load-more{width:100%;text-align:center;padding:8px;background:#f5f5f5;cursor:pointer;margin-top:8px;border-radius:4px;}
+.load-more:hover{background:#c9d8fd;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>每日记录 · <span id="todayStr"></span></h1>
+  <nav>
+    <button class="tabBtn active" data-page="day">当日</button>
+    <button class="tabBtn" data-page="week">历史周</button>
+    <button class="tabBtn" data-page="month">历史月</button>
+  </nav>
+  <div id="tagPalette"></div>
+</header>
+
+<!-- 当日 -->
+<section id="dayPage" class="page">
+  <table id="dayTable"><thead>
+    <tr><th style="width:90px">时间</th><th>计划</th><th>实际</th><th>备注</th></tr>
+  </thead><tbody></tbody></table>
+  <footer id="dayStats"><strong>当日统计</strong>：<span id="statPanel"></span></footer>
+</section>
+
+<!-- 历史周 -->
+<section id="weekPage" class="page hidden">
+  <h2>历史周</h2>
+  <div id="weekHistory"></div>
+  <div class="load-more" id="loadMoreWeek">加载更早周</div>
+</section>
+
+<!-- 历史月 -->
+<section id="monthPage" class="page hidden">
+  <h2>历史月</h2>
+  <div id="monthHistory"></div>
+  <div class="load-more" id="loadMoreMonth">加载更早月</div>
+</section>
+
+<script>
+/* ==========  基础  ========== */
+const $  = q => document.querySelector(q);
+const $$ = q => document.querySelectorAll(q);
+
+let currentDayKey = new Date().toISOString().slice(0,10);  // 启动时的日期
+$('#todayStr').textContent = currentDayKey;
+
+/* **** 用函数代替变量，每次拿当前日期 **** */
+function getToday(){ return new Date(); }
+function getTodayKey() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); // 先归零 UTC 偏移
+  return d.toISOString().slice(0,10);
+}
+
+// 第一次显示
+$('#todayStr').textContent = getTodayKey();
+
+const TAG_DEF = [
+{name:'生活',     color:'#e1f5fe'},
+{name:'运动',     color:'#ffecb3'},
+{name:'学校课程', color:'#e8f5e9'},
+{name:'活动',     color:'#f3e5f5'},
+{name:'自我发展', color:'#f5d9d9'},
+{name:'自主学习', color:'#fff3e0'},
+{name:'论文任务', color:'#efebe9'},
+{name:'琐事',     color:'#c9d8fd'}
+];
+const TAG_NAME_ARR = TAG_DEF.map(t=>t.name);
+const TAG_COLOR_ARR= TAG_DEF.map(t=>t.color);
+
+/* ==========  色盘  ========== */
+function initPalette(){
+  const box=$('#tagPalette');
+  TAG_DEF.forEach(tag=>{
+    const wrap=document.createElement('div'); wrap.className='tagWrap';
+    wrap.innerHTML=`<span class="tag" data-tag="${tag.name}" style="background:${tag.color}"></span><span class="tagLabel">${tag.name}</span>`;
+    box.appendChild(wrap);
+  });
+  const clear=document.createElement('div'); clear.className='tagWrap';
+  clear.innerHTML=`<span class="tag tag-clear" data-tag=""></span><span class="tagLabel">清除</span>`;
+  box.appendChild(clear);
+}
+initPalette();
+
+/* ==========  当日表格  ========== */
+function genRows(){
+  const tb=$('#dayTable tbody'); tb.innerHTML='';
+  for(let h=7;h<23;h++){
+    for(let m=0;m<60;m+=30){
+      const t=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+      const tr=document.createElement('tr'); tr.dataset.time=t;
+      tr.innerHTML=`<td class="timeCol">${t}</td>
+        <td contenteditable="true" class="plan"></td>
+        <td contenteditable="true" class="actual"></td>
+        <td contenteditable="true" class="note"></td>`;
+      tb.appendChild(tr);
+    }
+  }
+}
+genRows();
+
+/* ==========  存 / 读  ========== */
+function saveDay(){
+  const obj={};
+  $$('#dayTable tbody tr').forEach(tr=>{
+    const t=tr.dataset.time;
+    obj[t]={
+      plan : tr.querySelector('.plan').textContent.trim(),
+      actual:tr.querySelector('.actual').textContent.trim(),
+      note : tr.querySelector('.note').textContent.trim(),
+      tag  : tr.dataset.tag||''
+    };
+  });
+  localStorage.setItem(`day_${getTodayKey()}`,JSON.stringify(obj));
+}
+function loadDay(){
+  const todayKey = getTodayKey();
+  // === 清零前一天的数据 ===
+  //if(todayKey === "2025-12-31"){
+  //  genRows(); updateStat(); return; 
+  //}
+  const raw=localStorage.getItem(`day_${todayKey}`);
+  if(!raw) return;
+  const data=JSON.parse(raw);
+  $$('#dayTable tbody tr').forEach(tr=>{
+    const t=tr.dataset.time;
+    if(data[t]){
+      tr.querySelector('.plan').textContent  = data[t].plan||'';
+      tr.querySelector('.actual').textContent= data[t].actual||'';
+      tr.querySelector('.note').textContent  = data[t].note||'';
+      if(data[t].tag) applyTag(tr,data[t].tag,false);
+    }
+  });
+  updateStat();
+}
+
+/* ==========  标签 & 无标签  ========== */
+let selectedTag='';
+$('#tagPalette').addEventListener('click',e=>{
+  const wrap=e.target.closest('.tagWrap');
+  if(!wrap) return;
+  selectedTag=wrap.querySelector('.tag').dataset.tag;
+  $$('.tagWrap').forEach(w=>w.style.border='1px solid transparent');
+  wrap.style.border='1px solid #000';
+});
+$('#dayTable tbody').addEventListener('click',e=>{
+  const tr=e.target.closest('tr');
+  if(!tr) return;
+  if(selectedTag!==undefined) applyTag(tr,selectedTag);
+});
+function applyTag(tr,tag,update=true){
+  tr.dataset.tag=tag; tr.className='';
+  if(tag) tr.classList.add(`tagged-${tag}`);
+  if(update) updateStat();
+}
+
+/* ==========  当日统计（含无标签）  ========== */
+function updateStat(){
+  const counter={}; let noTag=0;
+  $$('#dayTable tbody tr').forEach(tr=>{
+    const tg=tr.dataset.tag;
+    if(tg) counter[tg]=(counter[tg]||0)+1; else noTag++;
+  });
+  const arr=Object.entries(counter).map(([k,v])=>`${k}:${v}`);
+  if(noTag) arr.push(`无标签:${noTag}`);
+  $('#statPanel').textContent=arr.join(' · ')||'无';
+}
+
+/* ==========  历史周/月  ========== */
+const weekCache=new Map(); let weekOffset=0;
+function loadHistoryWeek(){
+  const monday = new Date(getTodayKey());          // 本地 0 点基准
+  const dayOfWeek = monday.getDay();               // 0=日 1=一 ... 6=六
+  const offset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // 周日→-6，其他→正常
+  monday.setDate(monday.getDate() + offset - 7 * weekOffset);
+  const key=monday.toISOString().slice(0,10);
+  if(weekCache.has(key)){ appendWeekBlock(key,false); return; }
+  const days=['周一','周二','周三','周四','周五','周六','周日'];
+  const counter=Object.fromEntries(TAG_NAME_ARR.map(k=>[k,0]));
+  let noTag=0;
+  days.forEach((_,idx)=>{
+    const d=new Date(monday); d.setDate(monday.getDate()+idx);
+    const dayKey=d.toISOString().slice(0,10);
+    const raw=localStorage.getItem(`day_${dayKey}`);
+    if(!raw) return;
+    const day=JSON.parse(raw);
+    Object.values(day).forEach(r=>{
+      if(r.tag) counter[r.tag]++; else noTag++;
+    });
+  });
+  const sum=Object.values(counter).reduce((a,b)=>a+b,0)+noTag;
+  const summary=Object.entries(counter).map(([k,v])=>`${k}:${v}`).join(' · ')+(noTag?` · 无标签:${noTag}`:'')||'—';
+  weekCache.set(key,{summary,detail:{days,counter,noTag,sum,monday}});
+  appendWeekBlock(key,true);
+}
+function appendWeekBlock(key,needAnim){
+  const block=document.createElement('div'); block.className='history-block';
+  const {summary,detail}=weekCache.get(key);
+  block.innerHTML=`
+    <div class="history-summary">
+      <span><strong>周 ${key} 及以后</strong></span>
+      <span>${summary} &nbsp;&nbsp; 合计：<strong>${detail.sum}</strong></span>
+    </div>
+    <div class="history-detail"></div>
+  `;
+  block.querySelector('.history-summary').addEventListener('click',()=>toggleWeekDetail(block,key));
+  $('#weekHistory').appendChild(block);
+  if(needAnim) block.scrollIntoView({behavior:'smooth'});
+}
+function toggleWeekDetail(block,key){
+  const div=block.querySelector('.history-detail');
+  const isOpen=div.classList.contains('show');
+  if(!isOpen){
+    const {days,counter,noTag}=weekCache.get(key).detail;
+    let html='<table class="week-table"><tr><th>日期</th>';
+    TAG_NAME_ARR.forEach(n=>html+=`<th>${n}</th>`);
+    html+='<th>无标签</th><th>合计</th></tr>';
+    days.forEach((name,idx)=>{
+      const d=new Date(key); d.setDate(d.getDate()+idx);
+      const dayKey=d.toISOString().slice(0,10);
+      const dayCounter=Object.fromEntries(TAG_NAME_ARR.map(k=>[k,0]));
+      let dayNoTag=0;
+      if(localStorage.getItem(`day_${dayKey}`)){
+        const day=JSON.parse(localStorage.getItem(`day_${dayKey}`));
+        Object.values(day).forEach(r=>{
+          if(r.tag) dayCounter[r.tag]++; else dayNoTag++;
+        });
+      }
+      const daySum=Object.values(dayCounter).reduce((a,b)=>a+b,0)+dayNoTag;
+      html+='<tr>';
+      html+=`<td>${name} ${dayKey.slice(5)}</td>`;
+      TAG_NAME_ARR.forEach(n=>html+=`<td>${dayCounter[n]}</td>`);
+      html+=`<td>${dayNoTag}</td><td><strong>${daySum}</strong></td></tr>`;
+    });
+    html+='</table>';
+    div.innerHTML=html;
+  }
+  div.classList.toggle('show');
+}
+
+const monthCache=new Map(); let monthOffset=0;
+function loadHistoryMonth(){
+  const d=new Date(getToday().getFullYear(),getToday().getMonth()-monthOffset,1);
+  const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  if(monthCache.has(key)){ appendMonthBlock(key,false); return; }
+  const firstDay=new Date(d.getFullYear(),d.getMonth(),1);
+  const lastDay=new Date(d.getFullYear(),d.getMonth()+1,0);
+  const start=new Date(firstDay);
+  start.setDate(firstDay.getDate()-firstDay.getDay()+1);
+  const weeks=[];
+  const counter=Object.fromEntries(TAG_NAME_ARR.map(k=>[k,0]));
+  let noTag=0;
+  for(let mon=new Date(start); mon<=lastDay; mon.setDate(mon.getDate()+7)){
+    const weekCounter=Object.fromEntries(TAG_NAME_ARR.map(k=>[k,0]));
+    let weekNoTag=0;
+    for(let i=0;i<7;i++){
+      const dayKey=new Date(mon); dayKey.setDate(mon.getDate()+i);
+      if(dayKey.getMonth()!==d.getMonth()) continue;
+      const k=dayKey.toISOString().slice(0,10);
+      const raw=localStorage.getItem(`day_${k}`);
+      if(!raw) continue;
+      const day=JSON.parse(raw);
+      Object.values(day).forEach(r=>{
+        if(r.tag) weekCounter[r.tag]++; else weekNoTag++;
+      });
+    }
+    weeks.push({label:`第${weeks.length+1}周`,counter:weekCounter,noTag:weekNoTag});
+    TAG_NAME_ARR.forEach(n=>counter[n]+=weekCounter[n]);
+    noTag+=weekNoTag;
+  }
+  const sum=Object.values(counter).reduce((a,b)=>a+b,0)+noTag;
+  const summary=Object.entries(counter).map(([k,v])=>`${k}:${v}`).join(' · ')+(noTag?` · 无标签:${noTag}`:'')||'—';
+  monthCache.set(key,{summary,detail:{weeks,counter,noTag,sum,month:d}});
+  appendMonthBlock(key,true);
+}
+function appendMonthBlock(key,needAnim){
+  const block=document.createElement('div'); block.className='history-block';
+  const {summary,detail}=monthCache.get(key);
+  block.innerHTML=`
+    <div class="history-summary">
+      <span><strong>${key}</strong></span>
+      <span>${summary} &nbsp;&nbsp; 合计：<strong>${detail.sum}</strong></span>
+    </div>
+    <div class="history-detail"></div>
+  `;
+  block.querySelector('.history-summary').addEventListener('click',()=>toggleMonthDetail(block,key));
+  $('#monthHistory').appendChild(block);
+  if(needAnim) block.scrollIntoView({behavior:'smooth'});
+}
+function toggleMonthDetail(block,key){
+  const div=block.querySelector('.history-detail');
+  const isOpen=div.classList.contains('show');
+  if(!isOpen){
+    const {weeks}=monthCache.get(key).detail;
+    const canvas=document.createElement('canvas');
+    canvas.width=700; canvas.height=350;
+    div.appendChild(canvas);
+    drawHistoryMonthCanvas(weeks,canvas);
+  }
+  div.classList.toggle('show');
+}
+function drawHistoryMonthCanvas(weeks,canvas){
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width,H=canvas.height,pad=50,plotW=W-2*pad,plotH=H-2*pad;
+  ctx.clearRect(0,0,W,H);
+  if(weeks.length===0) return;
+  const labels=weeks.map(w=>w.label);
+  const datasets=[
+    ...TAG_DEF.map((tag,idx)=>({name:tag.name,color:TAG_COLOR_ARR[idx],data:weeks.map(w=>w.counter[tag.name])})),
+    {name:'无标签',color:'#999',data:weeks.map(w=>w.noTag)}
+  ];
+  const allVals=datasets.flatMap(d=>d.data);
+  const max=Math.max(1,...allVals);
+  // 网格
+  ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
+  for(let i=0;i<=5;i++){
+    const y=pad+(plotH/5)*i;
+    ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke();
+    ctx.fillStyle='#666'; ctx.font='12px sans-serif';
+    ctx.fillText(Math.round(max*(5-i)/5),5,y+4);
+  }
+  // x轴
+  labels.forEach((lab,i)=>{
+    const x=pad+(plotW/(labels.length-1||1))*i;
+    ctx.save(); ctx.translate(x,H-20); ctx.rotate(-Math.PI/4);
+    ctx.fillStyle='#666'; ctx.font='12px sans-serif'; ctx.fillText(lab,0,0);
+    ctx.restore();
+  });
+  // 折线+点
+  datasets.forEach(set=>{
+    ctx.strokeStyle=set.color; ctx.lineWidth=2; ctx.beginPath();
+    set.data.forEach((v,i)=>{
+      const x=pad+(plotW/(labels.length-1||1))*i;
+      const y=pad+plotH*(1-v/max);
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+    set.data.forEach((v,i)=>{
+      const x=pad+(plotW/(labels.length-1||1))*i;
+      const y=pad+plotH*(1-v/max);
+      ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2);
+      ctx.fillStyle=set.color; ctx.fill();
+    });
+  });
+  // 图例
+  datasets.forEach((set,idx)=>{
+    ctx.fillStyle=set.color;
+    ctx.fillRect(W-120,20+idx*18,12,12);
+    ctx.fillStyle='#333'; ctx.font='12px sans-serif';
+    ctx.fillText(set.name,W-100,30+idx*18);
+  });
+}
+
+/* ==========  加载更多  ========== */
+$('#loadMoreWeek').onclick=()=>{ weekOffset++; loadHistoryWeek(); };
+$('#loadMoreMonth').onclick=()=>{ monthOffset++; loadHistoryMonth(); };
+
+/* ==========  顶部 Tab  ========== */
+$$('.tabBtn').forEach(btn=>{
+  btn.onclick=()=>{
+    const p=btn.dataset.page;
+    $$('.page').forEach(pg=>pg.classList.add('hidden'));
+    $(`#${p}Page`).classList.remove('hidden');
+    $$('.tabBtn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    if(p==='week' && $('#weekHistory').children.length===0) loadHistoryWeek();
+    if(p==='month' && $('#monthHistory').children.length===0) loadHistoryMonth();
+  };
+});
+
+/* ==========  自动保存 & 日期刷新  ========== */
+window.addEventListener('beforeunload',saveDay);
+document.addEventListener('visibilitychange',()=>{if(document.hidden) saveDay();});
+
+setInterval(() => {
+  const nowKey = getTodayKey();
+  if (nowKey !== currentDayKey) {
+    // 更新 currentDayKey
+    saveDay();             // 保存昨天
+    currentDayKey = nowKey;
+
+    // 切换到今天
+    $('#todayStr').textContent = currentDayKey;
+
+    // 🔑 先重建空表
+    genRows();
+
+    // 🔑 再判断：如果今天有存档就加载，否则保持空白
+    const todayData = localStorage.getItem(`day_${nowKey}`);
+    if (todayData) {
+      loadDay();
+    }
+
+    updateStat();
+    syncHistory();
+
+    // 清缓存
+    const monday = new Date(currentDayKey);
+    monday.setDate(monday.getDate() - monday.getDay() + 1);
+    weekCache.delete(monday.toLocaleDateString('zh-CN'));
+
+    const monthKey = currentDayKey.slice(0, 7);
+    monthCache.delete(monthKey);
+
+    const lastMonday = new Date(currentDayKey);
+    lastMonday.setDate(lastMonday.getDate() - (lastMonday.getDay() + 6));
+    weekCache.delete(lastMonday.toLocaleDateString('zh-CN'));
+
+    const lastMonth = new Date(currentDayKey);
+    lastMonth.setDate(0);
+    monthCache.delete(lastMonth.toLocaleDateString('zh-CN').slice(0, 7));
+
+    // 重绘历史
+    const active = $('.page:not(.hidden)').id;
+    if (active === 'weekPage') {
+      $('#weekHistory').innerHTML = ''; weekOffset = 0; loadHistoryWeek();
+    }
+    if (active === 'monthPage') {
+      $('#monthHistory').innerHTML = ''; monthOffset = 0; loadHistoryMonth();
+    }
+  }
+}, 10_000);
+
+/* ===== 1. 每 30 秒自动落盘 ===== */
+setInterval(saveDay, 30_000);
+
+/* ===== 2. 页面唤醒时补存 ===== */
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) saveDay();
+});
+
+
+/* ==========  启动  ========== */
+function initDayPage(){
+  const nowKey = getTodayKey();
+  $('#todayStr').textContent = nowKey;  // 确保抬头显示正确日期
+  genRows();
+  loadDay();
+  updateStat();
+}
+
+initDayPage();   // 页面加载时强制初始化
+
+
+/* =============== 实时同步到历史周 & 历史月 =============== */
+function syncHistory(){            // 统一入口
+  const monday = new Date(getTodayKey());
+  monday.setDate(monday.getDate() - monday.getDay() + 1);
+  const wKey = monday.toISOString().slice(0,10);
+  weekCache.delete(wKey);          // 清本周缓存
+
+  const firstDay = new Date(getTodayKey());
+  firstDay.setDate(1);
+  const mKey = firstDay.toLocaleDateString('zh-CN').slice(0,7);
+  monthCache.delete(mKey);         // 清本月缓存
+
+  // 如果当前正在看历史页，立即重绘
+  if (!$('#weekPage').classList.contains('hidden')) {
+    $('#weekHistory').innerHTML = '';
+    weekOffset = 0;
+    loadHistoryWeek();
+  }
+  if (!$('#monthPage').classList.contains('hidden')) {
+    $('#monthHistory').innerHTML = '';
+    monthOffset = 0;
+    loadHistoryMonth();
+  }
+}
+
+/* 每次编辑完单元格就触发同步 */
+$('#dayTable tbody').addEventListener('input', () => {
+  saveDay();        // 先落盘
+  syncHistory();    // 再刷新历史
+});
+
+</script>
+</body>
+</html>
